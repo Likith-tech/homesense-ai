@@ -11,6 +11,8 @@ import {
   averageDailyKwh,
 } from './energy'
 import { computeEcoScore } from './ecoScore'
+import { projectIfNothingChanges } from './whatIf'
+import { detectBehavioralDeviation } from './behavioralBaseline'
 import { round, durationLabel, sinceLabel, watts, temp, currency, kwh, pct, aqiBand } from './format'
 
 /**
@@ -32,6 +34,37 @@ import { round, durationLabel, sinceLabel, watts, temp, currency, kwh, pct, aqiB
  */
 
 const SEVERITY_RANK = { critical: 0, warning: 1, info: 2, success: 3 }
+
+/**
+ * Priority tiers shown to the user, derived from the same `priority` number
+ * already used for sorting. `info`/`success` insights are always framed as
+ * optimisation suggestions rather than problems.
+ */
+export const TIER_META = {
+  CRITICAL: { label: 'Critical', tone: 'rose', rank: 0 },
+  HIGH: { label: 'High', tone: 'amber', rank: 1 },
+  MEDIUM: { label: 'Medium', tone: 'sky', rank: 2 },
+  LOW: { label: 'Low', tone: 'slate', rank: 3 },
+  OPTIMIZATION: { label: 'Optimisation', tone: 'violet', rank: 4 },
+}
+
+function deriveTier(insight) {
+  if (insight.severity === 'success' || insight.severity === 'info') return 'OPTIMIZATION'
+  if (insight.priority >= 95) return 'CRITICAL'
+  if (insight.priority >= 70) return 'HIGH'
+  if (insight.priority >= 35) return 'MEDIUM'
+  return 'LOW'
+}
+
+/**
+ * A deterministic "how many independent signals agree" score, not a
+ * statistical or ML probability. Presented to the user with that caveat.
+ */
+function deriveConfidence(insight) {
+  const base = 72 + (insight.signals?.length || 0) * 7
+  const bump = insight.severity === 'critical' ? 10 : insight.severity === 'warning' ? 4 : 0
+  return Math.min(98, base + bump)
+}
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -81,6 +114,11 @@ export function generateInsights(state) {
       effect: [{ type: 'LOCK_DOOR' }, { type: 'ECO_SWEEP' }, { type: 'ACK_ALERTS' }],
       secondary: { label: 'Acknowledge only', effect: { type: 'ACK_ALERTS' } },
       priority: 100,
+      signals: [
+        `Home mode: ${HOME_MODES[state.homeMode].label}`,
+        `Trigger: ${state.security.reason || 'sensor trip'}`,
+        `Since: ${sinceLabel(state.security.since, now)}`,
+      ],
     })
   }
 
@@ -98,6 +136,11 @@ export function generateInsights(state) {
       actionLabel: 'Secure the door',
       effect: { type: 'LOCK_DOOR' },
       priority: 99,
+      signals: [
+        `Home mode: ${HOME_MODES[state.homeMode].label}`,
+        'Door sensor: OPEN',
+        `Mode active: ${sinceLabel(state.modeChangedAt, now)}`,
+      ],
     })
   }
 
@@ -112,6 +155,11 @@ export function generateInsights(state) {
       actionLabel: 'Lock front door',
       effect: { type: 'LOCK_DOOR' },
       priority: 90,
+      signals: [
+        `Home mode: ${HOME_MODES[state.homeMode].label}`,
+        'Door lock: unlocked',
+        'Policy: armed mode requires locked deadbolt',
+      ],
     })
   }
 
@@ -144,6 +192,12 @@ export function generateInsights(state) {
       actionLabel: idle.length === 1 ? 'Turn off lights' : `Turn off ${idle.length} lights`,
       effect: { type: 'DEVICES_OFF', ids: idle.map((d) => d.id) },
       priority: 80,
+      signals: [
+        `Motion: none in ${roomName(primary.room)} for ${sinceLabel(room.lastMotionAt, now)}`,
+        `Device state: ${idle.length} light${idle.length > 1 ? 's' : ''} ON`,
+        `Draw: ${watts(wasted)} continuous`,
+      ],
+      whatIf: projectIfNothingChanges(wasted, 6),
     })
   }
 
@@ -176,6 +230,11 @@ export function generateInsights(state) {
           : { type: 'NONE' },
       extra: ac ? { type: 'SET_SETPOINT', id: ac.id, value: 24 } : null,
       priority: 70,
+      signals: [
+        `Room temp: ${temp(rooms[r.id].temp)} vs ${state.prefs.tempMax}°C ceiling`,
+        `Outdoor: ${temp(state.sensors.outdoorTemp)}`,
+        `Cooling device: ${ac ? `${ac.name} off` : 'none installed'}`,
+      ],
     })
   }
 
@@ -197,6 +256,11 @@ export function generateInsights(state) {
         value: 24,
       },
       priority: 60,
+      signals: [
+        `AC share of today's energy: ${pct(acShare.value)}`,
+        `AC energy: ${kwh(acShare.kwh)} of ${kwh(state.energy.todayKwh)} total`,
+        `Cost so far today: ${currency(costOf(acShare.kwh))}`,
+      ],
     })
   }
 
@@ -217,6 +281,11 @@ export function generateInsights(state) {
       actionLabel: 'Run eco sweep',
       effect: { type: 'ECO_SWEEP' },
       priority: 65,
+      signals: [
+        `Total load: ${watts(snap.total)} vs ${watts(COMFORT.highPowerW)} threshold`,
+        `Active devices: ${snap.active}`,
+        top ? `Largest contributor: ${top.name} (${pct(top.value)})` : 'No single dominant device',
+      ],
     })
   }
 
@@ -238,6 +307,11 @@ export function generateInsights(state) {
       actionLabel: 'Set to 24°C',
       effect: { type: 'SET_SETPOINT', id: coldAc.id, value: 24 },
       priority: 50,
+      signals: [
+        `${coldAc.name} setpoint: ${sp}°C`,
+        `Efficient band: ≥ 23°C`,
+        `Projected saving: ${currency(costOf((24 - sp) * 0.42 * 30))}/month`,
+      ],
     })
   }
 
@@ -258,6 +332,11 @@ export function generateInsights(state) {
       actionLabel: 'Switch to fan',
       effect: { type: 'SWAP_AC_FOR_FAN', ids: [acAtTarget.id] },
       priority: 45,
+      signals: [
+        `${roomName(acAtTarget.room)} temp: ${temp(rooms[acAtTarget.room].temp)}`,
+        `AC setpoint: ${state.devices[acAtTarget.id].setpoint ?? 24}°C — reached`,
+        'Idle AC ≈380W vs fan 75W',
+      ],
     })
   }
 
@@ -277,6 +356,12 @@ export function generateInsights(state) {
       actionLabel: 'Turn off TV',
       effect: { type: 'DEVICE_OFF', id: 'tv' },
       priority: 55,
+      signals: [
+        `Living room motion: none for ${sinceLabel(rooms.living.lastMotionAt, now)}`,
+        'TV state: ON',
+        `Draw: ${watts(snap.byDevice.tv || 100)}`,
+      ],
+      whatIf: projectIfNothingChanges(snap.byDevice.tv || 100, 6),
     })
   }
 
@@ -297,6 +382,15 @@ export function generateInsights(state) {
         actionLabel: 'Switch everything off',
         effect: { type: 'ECO_SWEEP' },
         priority: 75,
+        signals: [
+          `Home mode: Away since ${sinceLabel(state.modeChangedAt, now)}`,
+          `Non-critical devices ON: ${running.length}`,
+          `Combined draw: ${watts(running.reduce((a, d) => a + (snap.byDevice[d.id] || 0), 0))}`,
+        ],
+        whatIf: projectIfNothingChanges(
+          running.reduce((a, d) => a + (snap.byDevice[d.id] || 0), 0),
+          6,
+        ),
       })
     }
   }
@@ -315,6 +409,11 @@ export function generateInsights(state) {
       actionLabel: 'Circulate air',
       effect: { type: 'DEVICE_ON', id: 'living-fan' },
       priority: 40,
+      signals: [
+        `AQI: ${state.sensors.aqi} (${band.label})`,
+        `Warn threshold: ${COMFORT.aqiWarn}`,
+        'Circulation via AC filter typically restores <100 AQI',
+      ],
     })
   }
 
@@ -334,6 +433,38 @@ export function generateInsights(state) {
         id: DEVICE_CATALOG.find((d) => d.room === humid.id && d.type === 'Fan')?.id || 'living-fan',
       },
       priority: 35,
+      signals: [
+        `${humid.name} humidity: ${round(rooms[humid.id].humidity, 0)}%`,
+        `Comfort ceiling: ${COMFORT.humidityMax}%`,
+        `Temp: ${temp(rooms[humid.id].temp)}`,
+      ],
+    })
+  }
+
+  /* ------------------------------------------------- 7b. behavioral baseline */
+  const deviation = detectBehavioralDeviation(state)
+  if (deviation) {
+    const { room, hour, minutesOutsidePattern, quietFrom } = deviation
+    const armed = state.homeMode !== 'home'
+    out.push({
+      id: 'ai-baseline-deviation',
+      severity: armed ? 'warning' : 'info',
+      icon: 'History',
+      title: 'Unusual activity pattern',
+      message: `${room.name} is active at an unusual time — ${String(hour).padStart(2, '0')}:00 is outside its normal pattern.`,
+      reason: quietFrom
+        ? `${room.name} normally becomes inactive around ${quietFrom}:00. Current activity is roughly ${Math.round(
+            minutesOutsidePattern,
+          )} minutes outside the typical pattern for this hour.`
+        : `${room.name} is not usually active at this hour based on its typical usage pattern.`,
+      actionLabel: null,
+      effect: null,
+      priority: armed ? 72 : 32,
+      signals: [
+        `Room: ${room.name} — occupied now`,
+        `Hour: ${String(hour).padStart(2, '0')}:00`,
+        `Home mode: ${HOME_MODES[state.homeMode].label}`,
+      ],
     })
   }
 
@@ -349,6 +480,7 @@ export function generateInsights(state) {
       actionLabel: 'Restore power',
       effect: { type: 'DEVICE_ON', id: 'refrigerator' },
       priority: 95,
+      signals: ['Refrigerator state: OFF', 'Classification: critical appliance', 'Food safety risk: rising'],
     })
   }
 
@@ -365,6 +497,11 @@ export function generateInsights(state) {
       actionLabel: 'Add standby cut-off rule',
       effect: { type: 'ADD_STANDBY_AUTOMATION' },
       priority: 30,
+      signals: [
+        `Total automation rules: ${state.automations.length}`,
+        'Enabled: 0',
+        'Autonomous savings: not compounding',
+      ],
     })
   }
 
@@ -383,12 +520,18 @@ export function generateInsights(state) {
       actionLabel: null,
       effect: null,
       priority: 0,
+      signals: [
+        `Checked: security, ${ROOMS.length} rooms, energy, air quality`,
+        `Load: ${watts(snap.total)} · ${snap.active} devices active`,
+        `Eco score: ${eco.score}/100`,
+      ],
     })
   }
 
   const dismissed = state.dismissedInsights || []
   return out
     .filter((i) => !dismissed.some((d) => d.id === i.id && now < d.until))
+    .map((i) => ({ ...i, tier: deriveTier(i), confidence: deriveConfidence(i) }))
     .sort(
       (a, b) =>
         SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || b.priority - a.priority,
@@ -442,6 +585,48 @@ export function answerQuestion(state, raw) {
           '“What should I turn off?”',
           '“How can I improve my eco score?”',
         ],
+      },
+    )
+  }
+
+  /* ------------------------------------------------------------ leaving home */
+  if (has("i'm leaving", 'im leaving', 'leaving home', 'leaving the house', "we're leaving", 'going out')) {
+    const runningNow = DEVICE_CATALOG.filter(
+      (d) => isOn(state, d.id) && !d.critical && d.semantics !== 'lock',
+    )
+    const wasted = runningNow.reduce((a, d) => a + (snap.byDevice[d.id] || 0), 0)
+    return reply(
+      state.homeMode === 'away'
+        ? 'Away Mode is already active. The perimeter is armed and the front door is locked.'
+        : `Got it — arming Away Mode. ${
+            runningNow.length
+              ? `${runningNow.length} non-essential device${runningNow.length > 1 ? 's are' : ' is'} still on, drawing ${watts(wasted)}.`
+              : 'Nothing non-essential is running.'
+          }`,
+      {
+        bullets: runningNow.map((d) => `${d.name} — ${watts(snap.byDevice[d.id] || 0)}`),
+        actions:
+          state.homeMode === 'away'
+            ? []
+            : [
+                {
+                  label: 'Arm Away Mode & optimise',
+                  effect: [{ type: 'SET_HOME_MODE', mode: 'away' }, { type: 'ECO_SWEEP' }],
+                },
+              ],
+      },
+    )
+  }
+
+  if (has('turn off unnecessary', 'optimize home', 'optimise home', 'clear everything')) {
+    const opps = savingOpportunities(state)
+    return reply(
+      opps.length
+        ? `Optimising now. ${opps.length} saving opportunit${opps.length > 1 ? 'ies' : 'y'} found.`
+        : 'Nothing unnecessary is running right now — the home is already optimised.',
+      {
+        bullets: opps.map((o) => o.title),
+        actions: opps.length ? [{ label: 'Run eco sweep', effect: { type: 'ECO_SWEEP' } }] : [],
       },
     )
   }
@@ -652,25 +837,41 @@ export function answerQuestion(state, raw) {
     )
   }
 
+  /* ---------------------------------------------------------- attention */
+  if (has('need attention', 'needs attention', 'what should i know', 'anything wrong', 'status report')) {
+    const actionable = insights.filter((i) => i.severity !== 'success')
+    return reply(
+      actionable.length
+        ? `${actionable.length} thing${actionable.length > 1 ? 's' : ''} worth your attention right now.`
+        : 'Nothing needs your attention — every pillar is inside its normal band.',
+      {
+        bullets: actionable.slice(0, 5).map((i) => `[${i.tier}] ${i.message}`),
+        actions: actionable[0]?.effect ? [{ label: actionable[0].actionLabel, effect: actionable[0].effect }] : [],
+      },
+    )
+  }
+
   /* ------------------------------------------------------------- fallback */
-  const top = insights[0]
+  // Deliberately not a generic chatbot completion: unsupported input gets an
+  // honest scope statement rather than an invented answer.
   return reply(
-    `I don't have a specific answer for that yet, but here is what stands out right now: ${top.message}`,
+    "I can currently help with home status, energy, security, optimisation, and supported home actions. Try one of the suggestions below, or ask about a specific room.",
     {
       bullets: [
         `Home: ${HOME_MODES[state.homeMode].label} Mode · security ${state.security.status}`,
         `Load: ${watts(snap.total)} · today ${kwh(state.energy.todayKwh)} · ${currency(costOf(state.energy.todayKwh))}`,
         `Eco score: ${eco.score}/100`,
       ],
-      actions: top.effect ? [{ label: top.actionLabel, effect: top.effect }] : [],
+      actions: [],
     },
   )
 }
 
 export const SUGGESTED_PROMPTS = [
+  "I'm leaving home",
+  'What needs attention?',
   'Is my home secure?',
-  'How warm is the living room?',
   'Why is my bill so high?',
-  'What should I turn off?',
+  'What is consuming the most power?',
   'How can I improve my eco score?',
 ]

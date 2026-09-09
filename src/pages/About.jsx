@@ -5,19 +5,20 @@ import { APP, TARIFF, SIM, CO2_PER_KWH, BASELINE } from '../data/constants'
 import { DEVICE_CATALOG } from '../data/devices'
 import { ROOMS } from '../data/rooms'
 import { DEMO_STEPS } from '../utils/demo'
+import SystemStatus from '../components/SystemStatus'
 
 const PILLARS = [
   {
     icon: 'CircleAlert',
     title: 'Problem',
     tone: 'rose',
-    body: 'Traditional smart homes mainly provide manual control. They give you a phone-shaped light switch: you still have to notice the problem, decide what to do, and remember to do it. Nothing in the house is actually paying attention.',
+    body: 'Indian households lose 15–20% of their electricity bill to things nobody is watching — an AC left at 20°C, a light on in an empty room, a TV playing to nobody — and get no warning when a door opens while the house is supposed to be empty. "Smart" home apps just move the light switch onto a phone; they still need a human to notice, decide and act.',
   },
   {
     icon: 'Sparkles',
     title: 'Solution',
     tone: 'emerald',
-    body: 'HomeSense AI continuously understands the home’s environment and proactively recommends actions. It correlates climate, presence, energy and security into one picture, and every recommendation ships with the reason behind it and a button that actually carries it out.',
+    body: 'HomeSense AI watches the house continuously and closes the loop itself: it correlates climate, presence, energy and security into one picture, and every recommendation ships with the numeric reasoning behind it and a button that genuinely carries it out. No black-box model to trust blindly — every "why" is auditable back to a sensor reading, and it keeps working with zero internet and zero API cost.',
   },
   {
     icon: 'Rocket',
@@ -60,7 +61,28 @@ const ARCHITECTURE = [
     file: 'utils/ai.js',
     icon: 'Sparkles',
     detail:
-      'A deterministic expert system producing ranked insights, each with an observation, a justification and an executable effect. Runs offline with no API key.',
+      'A deterministic expert system producing ranked insights, each with an observation, a justification, a priority tier, a confidence score and an executable effect. Runs offline with no API key.',
+  },
+  {
+    layer: 'HomeSense Score',
+    file: 'utils/homeSenseScore.js',
+    icon: 'Gauge',
+    detail:
+      'Composite 0-100 rating across five pillars — Energy, Security, Comfort, Carbon, Automation — each with an attributed reason. Recomputed live; nothing is stored or hard-coded.',
+  },
+  {
+    layer: 'What-if engine',
+    file: 'utils/whatIf.js',
+    icon: 'Clock',
+    detail:
+      'Projects a real, currently-measured wattage forward in time to answer "what happens if nothing changes" — extending a live number, never inventing one.',
+  },
+  {
+    layer: 'Behavioral baseline',
+    file: 'utils/behavioralBaseline.js',
+    icon: 'History',
+    detail:
+      'A transparent, rule/statistical hour-of-day activity table per room — explicitly not machine learning — used to flag activity outside a room’s normal pattern.',
   },
   {
     layer: 'Effect pipeline',
@@ -86,6 +108,14 @@ const STACK = [
   { name: 'Lucide icons', icon: 'Gem' },
   { name: 'localStorage', icon: 'Server' },
 ]
+
+function FlowNode({ children }) {
+  return (
+    <span className="rounded-lg bg-white/6 px-2.5 py-1.5 font-medium text-mist-200 ring-1 ring-white/10">
+      {children}
+    </span>
+  )
+}
 
 function Settings() {
   const { state, api } = useHome()
@@ -196,6 +226,8 @@ export default function About() {
         </div>
       </Card>
 
+      <SystemStatus />
+
       {/* pillars */}
       <div className="grid gap-3 sm:grid-cols-2">
         {PILLARS.map((p) => {
@@ -229,6 +261,43 @@ export default function About() {
             one module and leaves the other six untouched.
           </p>
         </div>
+      </Card>
+
+      {/* hardware path */}
+      <Card className="p-5">
+        <SectionTitle icon="Cable" hint="planned hardware path — nothing below is connected today">
+          From simulator to hardware
+        </SectionTitle>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <p className="text-[10.5px] font-semibold uppercase tracking-wider text-emerald-300">Current</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-mist-300">
+              <FlowNode>Simulator</FlowNode>
+              <Icon name="ArrowRight" size={13} className="text-mist-600" />
+              <FlowNode>HomeSense Engine</FlowNode>
+              <Icon name="ArrowRight" size={13} className="text-mist-600" />
+              <FlowNode>UI</FlowNode>
+            </div>
+          </div>
+          <div>
+            <p className="text-[10.5px] font-semibold uppercase tracking-wider text-sky-300">Planned hardware path</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-mist-300">
+              <FlowNode>ESP32 sensors</FlowNode>
+              <Icon name="ArrowRight" size={13} className="text-mist-600" />
+              <FlowNode>MQTT</FlowNode>
+              <Icon name="ArrowRight" size={13} className="text-mist-600" />
+              <FlowNode>Gateway</FlowNode>
+              <Icon name="ArrowRight" size={13} className="text-mist-600" />
+              <FlowNode>HomeSense Engine</FlowNode>
+              <Icon name="ArrowRight" size={13} className="text-mist-600" />
+              <FlowNode>Device control</FlowNode>
+            </div>
+          </div>
+        </div>
+        <p className="mt-3 text-[11.5px] leading-relaxed text-mist-500">
+          Only the source of `state.sensors` changes — the reasoning layer, HomeSense Score, automations and
+          scenario engine all read the same shape either way.
+        </p>
       </Card>
 
       {/* architecture */}

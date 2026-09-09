@@ -12,6 +12,8 @@ import {
 } from '../components/ui/primitives'
 import SecurityEvent from '../components/SecurityEvent'
 import AIInsight from '../components/AIInsight'
+import ScenarioCenter from '../components/ScenarioCenter'
+import AwayModeBanner from '../components/AwayModeBanner'
 import { useHome } from '../context/HomeContext'
 import { HOME_MODES, SECURITY_STATUS } from '../data/constants'
 import { ROOMS } from '../data/rooms'
@@ -211,6 +213,7 @@ export default function Security() {
   return (
     <div className="space-y-6 animate-float-in">
       <StatusBanner />
+      <AwayModeBanner />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile icon="Shield" tone={alerting ? 'rose' : 'emerald'} label="Alerts raised" value={state.security.breaches || 0} hint={alerting ? 'One alert is awaiting acknowledgement' : 'Nothing outstanding'} />
@@ -246,10 +249,18 @@ export default function Security() {
         <SensorGrid />
       </section>
 
+      {/* scenario center */}
+      <section>
+        <SectionTitle icon="Layers" hint="one click sets up a whole situation, live in the simulator">
+          Scenario Center
+        </SectionTitle>
+        <ScenarioCenter />
+      </section>
+
       {/* simulator */}
       <section>
-        <SectionTitle icon="Cpu" hint="inject a real sensor event into the running model">
-          Simulate an event
+        <SectionTitle icon="Cpu" hint="inject a single sensor event into the running model">
+          Simulate a single event
         </SectionTitle>
         <Card className="p-4">
           <div className="flex flex-wrap items-center gap-2.5">

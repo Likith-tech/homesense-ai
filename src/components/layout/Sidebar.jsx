@@ -12,7 +12,7 @@ export const NAV_ITEMS = [
   { to: '/energy', label: 'Energy', icon: 'Zap' },
   { to: '/automations', label: 'Automations', icon: 'Workflow' },
   { to: '/security', label: 'Security', icon: 'ShieldCheck' },
-  { to: '/assistant', label: 'AI Assistant', icon: 'Sparkles' },
+  { to: '/assistant', label: 'Copilot', icon: 'Sparkles' },
   { to: '/about', label: 'About', icon: 'Info' },
 ]
 

@@ -129,10 +129,11 @@ export default function Assistant() {
     if (state.chat.length === 0) {
       api.pushChat({
         role: 'assistant',
-        text: "I'm HomeSense AI. I read your sensors every few seconds and reason over them — climate, presence, energy and security. Ask me anything, or tap a suggestion below.",
+        text: "I'm HomeSense Copilot. I read your sensors every few seconds and reason over them — climate, presence, energy and security. Ask me anything, or tap a suggestion below.",
         bullets: [
           'Every recommendation comes with its reason and a button that really applies it.',
           'I never invent numbers — everything I quote is read from live simulated telemetry.',
+          'Outside my supported topics, I say so instead of guessing.',
         ],
         actions: [],
       })
@@ -162,9 +163,10 @@ export default function Assistant() {
             <span className="absolute -bottom-0.5 -right-0.5 size-3 rounded-full bg-emerald-400 ring-2 ring-ink-900" />
           </span>
           <div className="min-w-0 flex-1">
-            <h2 className="text-sm font-semibold text-mist-100">HomeSense AI</h2>
+            <h2 className="text-sm font-semibold text-mist-100">HomeSense Copilot</h2>
             <p className="text-[11.5px] text-mist-500">
-              Online · reasoning over {Object.keys(state.devices).length} devices and {ROOMS.length} rooms
+              Reasoning live over {Object.keys(state.devices).length} devices and {ROOMS.length} rooms — no
+              cloud, no API key
             </p>
           </div>
           <Button variant="subtle" size="sm" icon="RefreshCw" onClick={api.clearChat}>

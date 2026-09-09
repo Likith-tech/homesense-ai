@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import Icon from '../components/ui/Icon'
 import {
@@ -13,12 +14,21 @@ import {
 import SensorCard from '../components/SensorCard'
 import AIInsight from '../components/AIInsight'
 import EcoScoreCard from '../components/EcoScoreCard'
+import HomeSenseScoreCard from '../components/HomeSenseScoreCard'
+import AwayModeBanner from '../components/AwayModeBanner'
 import SecurityEvent from '../components/SecurityEvent'
 import { LivePowerChart, DistributionChart } from '../components/EnergyChart'
 import { useHome } from '../context/HomeContext'
 import { ROOMS } from '../data/rooms'
-import { HOME_MODES, SECURITY_STATUS, COMFORT, TARIFF } from '../data/constants'
-import { costOf, groupDistribution, efficiencyVsBaseline, projectMonthlyBill } from '../utils/energy'
+import { HOME_MODES, SECURITY_STATUS, COMFORT, TARIFF, BASELINE } from '../data/constants'
+import {
+  costOf,
+  co2Of,
+  groupDistribution,
+  efficiencyVsBaseline,
+  projectMonthlyBill,
+  averageDailyKwh,
+} from '../utils/energy'
 import {
   watts, kwh, currency, temp, round, clock, sinceLabel, aqiBand, pct,
 } from '../utils/format'
@@ -28,6 +38,11 @@ import {
 function Hero() {
   const { state, api, insights, power } = useHome()
   const actionable = insights.filter((i) => i.severity !== 'success')
+
+  const avgKwh = averageDailyKwh(state) || state.energy.todayKwh || BASELINE.dailyKwh
+  const savedKwhPerMonth = Math.max(0, (BASELINE.dailyKwh - avgKwh) * 30)
+  const savedRupeesPerMonth = costOf(savedKwhPerMonth)
+  const savedCo2PerMonth = co2Of(savedKwhPerMonth)
 
   return (
     <Card className="relative overflow-hidden p-5 sm:p-7">
@@ -76,7 +91,26 @@ function Hero() {
             <StatusBadge tone="sky" icon="Zap">
               {watts(power.total)} live load
             </StatusBadge>
+            <StatusBadge tone="slate" icon="ShieldCheck">
+              Explainable AI · runs offline, no API keys
+            </StatusBadge>
           </div>
+
+          {savedRupeesPerMonth > 1 && (
+            <div className="mt-3.5 inline-flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-xl bg-emerald-400/8 px-3.5 py-2.5 ring-1 ring-emerald-400/20">
+              <Icon name="TrendingDown" size={14} className="mb-0.5 text-emerald-300" />
+              <span className="text-[13px] text-mist-300">Projected impact vs an un-optimised home:</span>
+              <span className="text-[15px] font-semibold text-emerald-300">
+                {currency(savedRupeesPerMonth, 0)}
+              </span>
+              <span className="text-[12px] text-mist-400">saved / month</span>
+              <span className="text-mist-600">·</span>
+              <span className="text-[15px] font-semibold text-emerald-300">
+                {round(savedCo2PerMonth, 0)} kg
+              </span>
+              <span className="text-[12px] text-mist-400">CO₂ avoided / month</span>
+            </div>
+          )}
         </div>
 
         <div className="flex shrink-0 flex-col items-stretch gap-2.5 lg:w-64">
@@ -361,11 +395,14 @@ function RoomsGlance() {
 
 function InsightsPanel() {
   const { insights } = useHome()
+  const top = insights.slice(0, 5)
+  const critical = top.filter((i) => i.tier === 'CRITICAL' || i.tier === 'HIGH').length
+
   return (
     <section>
       <SectionTitle
         icon="Sparkles"
-        hint={`${insights.length} active`}
+        hint={`${insights.length} active${critical ? ` · ${critical} need attention` : ''}`}
         action={
           <Link
             to="/assistant"
@@ -378,7 +415,7 @@ function InsightsPanel() {
         AI Insights
       </SectionTitle>
       <div className="space-y-3">
-        {insights.slice(0, 5).map((insight) => (
+        {top.map((insight) => (
           <AIInsight key={insight.id} insight={insight} />
         ))}
       </div>
@@ -388,27 +425,60 @@ function InsightsPanel() {
 
 function ActivityFeed() {
   const { state } = useHome()
+  const [filter, setFilter] = useState('all')
+  const events =
+    filter === 'ai'
+      ? state.events.filter((e) => e.source === 'ai' || e.source === 'automation')
+      : state.events
+
   return (
     <section>
       <SectionTitle
         icon="History"
+        hint="real events from application state"
         action={
-          <Link
-            to="/security"
-            className="inline-flex items-center gap-1 text-[12px] font-medium text-emerald-300 transition hover:text-emerald-200"
-          >
-            Full log <Icon name="ArrowRight" size={13} />
-          </Link>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-0.5 rounded-xl bg-ink-850/70 p-1 ring-1 ring-white/8">
+              {[
+                { id: 'all', label: 'Home timeline' },
+                { id: 'ai', label: 'AI actions' },
+              ].map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setFilter(f.id)}
+                  className={cx(
+                    'rounded-lg px-2.5 py-1 text-[11px] font-medium transition',
+                    filter === f.id ? 'bg-white/10 text-mist-100' : 'text-mist-500 hover:text-mist-300',
+                  )}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            <Link
+              to="/security"
+              className="inline-flex items-center gap-1 text-[12px] font-medium text-emerald-300 transition hover:text-emerald-200"
+            >
+              Full log <Icon name="ArrowRight" size={13} />
+            </Link>
+          </div>
         }
       >
         Recent activity
       </SectionTitle>
       <Card className="p-2">
-        <ul className="space-y-0.5">
-          {state.events.slice(0, 7).map((e) => (
-            <SecurityEvent key={e.id} event={e} now={state.simTime} />
-          ))}
-        </ul>
+        {events.length === 0 ? (
+          <p className="p-4 text-center text-[12px] text-mist-500">
+            No AI or automation actions recorded yet — trigger a scenario to populate this.
+          </p>
+        ) : (
+          <ul className="space-y-0.5">
+            {events.slice(0, 7).map((e) => (
+              <SecurityEvent key={e.id} event={e} now={state.simTime} />
+            ))}
+          </ul>
+        )}
       </Card>
     </section>
   )
@@ -420,6 +490,8 @@ export default function Dashboard() {
   return (
     <div className="space-y-6 animate-float-in">
       <Hero />
+      <HomeSenseScoreCard />
+      <AwayModeBanner />
       <HomeStatus />
 
       <div className="grid gap-6 xl:grid-cols-[1.65fr_1fr]">
@@ -431,7 +503,9 @@ export default function Dashboard() {
         <div className="space-y-6">
           <InsightsPanel />
           <section>
-            <SectionTitle icon="Leaf">Eco Score</SectionTitle>
+            <SectionTitle icon="Leaf" hint="feeds the Energy & Carbon pillars above">
+              Energy &amp; Carbon detail
+            </SectionTitle>
             <EcoScoreCard />
           </section>
           <ActivityFeed />
